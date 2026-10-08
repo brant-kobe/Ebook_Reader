@@ -156,5 +156,7 @@ mark { padding: 0 2px; background: #f4c772; color: #49351d; }
 .note-item { position: relative; padding: 13px 15px 15px; border-bottom: 1px solid var(--line); }
 .note-item p { margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.55; }
 .note-item .note-quote { margin-bottom: 5px; }
-.note-delete { margin-top: 9px; border: 0; padding: 0; background: transparent; color: var(--muted); font-size: 10px; }
+.note-item-actions { display: flex; gap: 12px; margin-top: 9px; }
+.note-edit, .note-delete { border: 0; padding: 0; background: transparent; color: var(--muted); font-size: 10px; }
+.note-edit:hover, .note-delete:hover { color: var(--accent); }
 @media (max-width: 1100px) { .book-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .library-page { width: calc(100vw - 72px); } }

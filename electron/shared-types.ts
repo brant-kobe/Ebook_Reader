@@ -99,5 +99,6 @@ export interface BookApi {
   removeBookmark: (bookmarkId: string) => Promise<ApiResponse<void>>;
   listNotes: (bookId: string) => Promise<ApiResponse<Note[]>>;
   saveNote: (note: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>) => Promise<ApiResponse<Note>>;
+  updateNote: (noteId: string, content: string) => Promise<ApiResponse<Note>>;
   removeNote: (noteId: string) => Promise<ApiResponse<void>>;
 }

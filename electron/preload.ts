@@ -21,6 +21,7 @@ const api: BookApi = {
   removeBookmark: (bookmarkId) => ipcRenderer.invoke('bookmark:remove', bookmarkId),
   listNotes: (bookId) => ipcRenderer.invoke('note:list', bookId),
   saveNote: (note) => ipcRenderer.invoke('note:save', note),
+  updateNote: (noteId, content) => ipcRenderer.invoke('note:update', { noteId, content }),
   removeNote: (noteId) => ipcRenderer.invoke('note:remove', noteId),
 };
 

@@ -129,6 +129,15 @@ export function saveNote(input: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>) {
   return note;
 }
 
+export function updateNote(noteId: string, content: string) {
+  const note = getState().notes.find((item) => item.id === noteId);
+  if (!note) throw new Error('找不到这条批注');
+  note.content = content;
+  note.updatedAt = Date.now();
+  persist();
+  return note;
+}
+
 export function removeNote(noteId: string) {
   getState().notes = getState().notes.filter((note) => note.id !== noteId);
   persist();

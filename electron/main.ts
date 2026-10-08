@@ -12,6 +12,7 @@ import {
   saveBookmark,
   saveNote,
   setSettings,
+  updateNote,
   updateProgress,
 } from './services/store-service';
 import {
@@ -247,6 +248,22 @@ function registerIpc() {
       if (typeof noteId !== 'string') throw new Error('无效的批注 ID');
       removeNote(noteId);
       return result(undefined);
+    } catch (error) {
+      return failure(error);
+    }
+  });
+
+  ipcMain.handle('note:update', (_event, payload: unknown) => {
+    try {
+      if (!payload || typeof payload !== 'object'
+        || typeof (payload as { noteId?: unknown }).noteId !== 'string'
+        || typeof (payload as { content?: unknown }).content !== 'string') {
+        throw new Error('无效的批注');
+      }
+      const noteId = (payload as { noteId: string }).noteId;
+      const content = (payload as { content: string }).content.trim();
+      if (!content) throw new Error('批注内容不能为空');
+      return result(updateNote(noteId, content));
     } catch (error) {
       return failure(error);
     }

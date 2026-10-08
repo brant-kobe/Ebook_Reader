@@ -120,6 +120,7 @@ PDF 保存页码，TXT/DOCX 保存 `0` 到 `1` 的滚动比例，EPUB 保存章�
 | `bookmark:list/save/remove` | 管理书签 |
 | `note:list` | 获取指定书籍的批注 |
 | `note:save` | 保存书籍位置、摘录和批注正文 |
+| `note:update` | 更新已有批注正文并刷新更新时间 |
 | `note:remove` | 删除批注 |
 
 主菜单导入完成后，主进程通过 `library:imported` 事件通知 renderer。preload 将这些通道封装为 `window.bookApi` 的 `chooseFile`、`listBooks`、`readText`、`readBinary`、`saveProgress`、设置和书签方法。
@@ -165,7 +166,7 @@ TXT 由主进程读取原始字节，`chardet.detect` 检测编码，再由 `ico
 
 ## 11. 批注实现
 
-`ReaderNotes` 是三类阅读器共享的批注面板。它通过 `note:list` 加载当前书籍的全部批注，通过 `note:save` 保存当前阅读位置、选中文本摘录和批注正文，通过 `note:remove` 删除记录。TXT/EPUB 在内容区域鼠标松开时读取浏览器选区；PDF 使用当前页作为位置，不改写 PDF canvas 或源文件。主进程会限制摘录长度为 1000 个字符，并拒绝空批注。
+`ReaderNotes` 是三类阅读器共享的批注面板。它通过 `note:list` 加载当前书籍的全部批注，通过 `note:save` 保存当前阅读位置、选中文本摘录和批注正文，通过 `note:update` 修改已有批注正文，通过 `note:remove` 删除记录。编辑时保留原批注的位置、摘录和创建时间，只刷新正文和更新时间。TXT/EPUB 在内容区域鼠标松开时读取浏览器选区；PDF 使用当前页作为位置，不改写 PDF canvas 或源文件。主进程会限制摘录长度为 1000 个字符，并拒绝空批注。
 
 批注入口使用独立的 `.notes-fab` 悬浮球。组件首次布局时根据当前阅读栏和视口边界计算位置，默认放在阅读栏右侧的可见区域中部；悬浮球使用 `position: fixed`，因此窗口或阅读内容滚动时仍留在视野内。`ResizeObserver` 和窗口 `resize` 事件会重新计算边界，拖动过程中则把位置限制在阅读栏和视口的交集范围内。悬浮球拖动超过阈值后会抑制点击，避免误打开面板。
 
@@ -186,4 +187,4 @@ npm.cmd run build
 
 ## 13. 当前限制
 
-EPUB 暂不支持书内图片、原始 CSS、音视频、外部链接及复杂排版；批注暂不支持编辑、跳转和导出；PDF 目录、文本选择、云同步、账号、DRM、数据库迁移和安装包配置也尚未实现。
+EPUB 暂不支持书内图片、原始 CSS、音视频、外部链接及复杂排版；批注暂不支持跳转和导出；PDF 目录、文本选择、云同步、账号、DRM、数据库迁移和安装包配置也尚未实现。

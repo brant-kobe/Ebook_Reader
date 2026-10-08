@@ -31,6 +31,7 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
   const [notes, setNotes] = useState<Note[]>([]);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [fabPosition, setFabPosition] = useState<Position | null>(null);
@@ -52,6 +53,7 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
   useEffect(() => {
     setOpen(false);
     setDraft('');
+    setEditingNoteId(null);
     setError('');
     setFabPosition(null);
     setPanelPosition(null);
@@ -171,15 +173,24 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
     if (kind === 'fab') suppressFabClickRef.current = false;
   };
 
+  const resetComposer = () => {
+    setDraft('');
+    setEditingNoteId(null);
+    setError('');
+  };
+
   const handleFabClick = () => {
     if (suppressFabClickRef.current) {
       suppressFabClickRef.current = false;
       return;
     }
-    setOpen((current) => !current);
+    setOpen((current) => {
+      if (!current) resetComposer();
+      return !current;
+    });
   };
 
-  const addNote = async () => {
+  const saveDraft = async () => {
     const content = draft.trim();
     if (!content) {
       setError('请先输入批注内容');
@@ -187,21 +198,37 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
     }
     setSaving(true);
     setError('');
-    const response = await window.bookApi.saveNote({
-      bookId: book.id,
-      location,
-      chapterHref,
-      locationLabel,
-      quote: quote.trim().slice(0, 1000),
-      content,
-    });
+    const response = editingNoteId
+      ? await window.bookApi.updateNote(editingNoteId, content)
+      : await window.bookApi.saveNote({
+        bookId: book.id,
+        location,
+        chapterHref,
+        locationLabel,
+        quote: quote.trim().slice(0, 1000),
+        content,
+      });
     setSaving(false);
     if (!response.ok) {
       setError(response.error);
       return;
     }
-    setNotes((current) => [response.data, ...current]);
-    setDraft('');
+    setNotes((current) => editingNoteId
+      ? current.map((note) => note.id === editingNoteId ? response.data : note)
+      : [response.data, ...current]);
+    resetComposer();
+    setOpen(false);
+  };
+
+  const startEditing = (note: Note) => {
+    setEditingNoteId(note.id);
+    setDraft(note.content);
+    setError('');
+    setOpen(true);
+  };
+
+  const cancelEditing = () => {
+    resetComposer();
     setOpen(false);
   };
 
@@ -241,12 +268,14 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
             if ((event.target as HTMLElement).closest('button')) return;
             beginDrag('panel', event);
           }}>
-            <strong>读书笔记</strong>
+            <strong>{editingNoteId ? '修改批注' : '读书笔记'}</strong>
             <button type="button" className="notes-close" onClick={() => setOpen(false)} aria-label="关闭批注面板">×</button>
           </div>
           <div className="note-composer">
-            {quote && <blockquote className="note-quote">“{quote}”</blockquote>}
-            <div className="note-location">当前位置：{locationLabel}</div>
+            {((editingNoteId && notes.find((note) => note.id === editingNoteId)?.quote) || (!editingNoteId && quote)) && (
+              <blockquote className="note-quote">“{editingNoteId ? notes.find((note) => note.id === editingNoteId)?.quote : quote}”</blockquote>
+            )}
+            <div className="note-location">当前位置：{editingNoteId ? notes.find((note) => note.id === editingNoteId)?.locationLabel : locationLabel}</div>
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -255,8 +284,8 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
               autoFocus
             />
             <div className="note-composer-actions">
-              <button type="button" className="secondary-button note-cancel" onClick={() => setOpen(false)}>取消</button>
-              <button type="button" className="primary-button note-save" onClick={() => void addNote()} disabled={saving}>{saving ? '保存中...' : '保存批注'}</button>
+              <button type="button" className="secondary-button note-cancel" onClick={cancelEditing}>取消</button>
+              <button type="button" className="primary-button note-save" onClick={() => void saveDraft()} disabled={saving}>{saving ? '保存中...' : editingNoteId ? '保存修改' : '保存批注'}</button>
             </div>
           </div>
           {error && <div className="notes-error">{error}</div>}
@@ -266,7 +295,10 @@ export function ReaderNotes({ book, location, locationLabel, chapterHref, quote 
                 <div className="note-item-meta">{note.locationLabel}</div>
                 {note.quote && <blockquote className="note-quote">“{note.quote}”</blockquote>}
                 <p>{note.content}</p>
-                <button type="button" className="note-delete" onClick={() => void deleteNote(note.id)}>删除</button>
+                <div className="note-item-actions">
+                  <button type="button" className="note-edit" onClick={() => startEditing(note)}>编辑</button>
+                  <button type="button" className="note-delete" onClick={() => void deleteNote(note.id)}>删除</button>
+                </div>
               </article>
             ))}
           </div>
