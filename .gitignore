@@ -1,0 +1,21 @@
+node_modules/
+out/
+dist/
+.vite/
+.cache/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Electron packaging artifacts
+release/
+*.asar
