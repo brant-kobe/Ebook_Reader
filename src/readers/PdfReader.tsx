@@ -3,13 +3,13 @@ import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { BookRecord, BookProgress, ReaderSettings } from '../../electron/shared-types';
 import { ReaderNotes } from './ReaderNotes';
+import { getPdfPageBounds, getVisiblePdfPages, normalizePdfPage, type PdfViewMode } from './pdf-pagination';
 // Vite resolves the worker as a URL asset during the renderer build.
 // @ts-expect-error TypeScript does not understand Vite's asset query.
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
-type PdfViewMode = 'single' | 'double';
 type PdfZoomMode = 'manual' | 'fit';
 type RenderTask = { cancel: () => void };
 type ScrollPosition = { top: number; left: number; topRatio: number; leftRatio: number };
@@ -41,10 +41,7 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
   const [error, setError] = useState('');
   const [bookmarkId, setBookmarkId] = useState<string | null>(null);
   const scale = zoomMode === 'fit' ? fitScale : manualScale;
-  const visiblePages = useMemo(
-    () => viewMode === 'double' && page < pageCount ? [page, page + 1] : [page],
-    [page, pageCount, viewMode],
-  );
+  const visiblePages = useMemo(() => getVisiblePdfPages(page, pageCount, viewMode), [page, pageCount, viewMode]);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +58,7 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
           if (!active) return;
           setDocument(loaded);
           setPageCount(loaded.numPages);
-          setPage((current) => Math.min(Math.max(current, 1), loaded.numPages));
+          setPage((current) => normalizePdfPage(current, loaded.numPages, viewMode));
           onReady();
         } catch {
           setError('PDF 文件无法解析');
@@ -200,7 +197,7 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
 
   const goToPage = (next: number) => {
     if (!pageCount) return;
-    const nextPage = Math.min(Math.max(next, 1), pageCount);
+    const nextPage = normalizePdfPage(next, pageCount, viewMode);
     if (nextPage === page) return;
     if (scrollRef.current) {
       const maxTop = Math.max(0, scrollRef.current.scrollHeight - scrollRef.current.clientHeight);
@@ -213,6 +210,10 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
       };
     }
     setPage(nextPage);
+  };
+  const changeViewMode = (nextMode: PdfViewMode) => {
+    setViewMode(nextMode);
+    setPage((current) => normalizePdfPage(current, pageCount, nextMode));
   };
   const changeManualScale = (delta: number) => {
     const currentScale = zoomMode === 'fit' ? scale : manualScale;
@@ -254,16 +255,16 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
     <section className="pdf-reader">
       <div className="reader-subbar">
         <div className="pdf-controls">
-          <button type="button" onClick={() => goToPage(page - (viewMode === 'double' ? 2 : 1))} disabled={page <= 1}>上一页</button>
+          <button type="button" onClick={() => goToPage(page - (viewMode === 'double' ? 2 : 1))} disabled={page <= 1}>{viewMode === 'double' ? '上一组' : '上一页'}</button>
           <label className="page-input">
             <input type="number" min="1" max={pageCount} value={page} onChange={(event) => goToPage(Number(event.target.value))} />
-            {page < pageCount && viewMode === 'double' ? `–${page + 1}` : ''} / {pageCount || '—'}
+            {visiblePages.length > 1 ? `–${visiblePages[1]}` : ''} / {pageCount || '—'}
           </label>
-          <button type="button" onClick={() => goToPage(page + (viewMode === 'double' ? 2 : 1))} disabled={page >= pageCount}>下一页</button>
+          <button type="button" onClick={() => goToPage(page + (viewMode === 'double' ? 2 : 1))} disabled={page >= getPdfPageBounds(pageCount, viewMode).max}>{viewMode === 'double' ? '下一组' : '下一页'}</button>
         </div>
         <div className="pdf-controls">
           <button type="button" className={bookmarkId ? 'bookmark-active' : ''} onClick={toggleBookmark} aria-pressed={Boolean(bookmarkId)} title="快捷键 B">{bookmarkId ? '已书签' : '书签'}</button>
-          <select className="pdf-select" value={viewMode} onChange={(event) => setViewMode(event.target.value as PdfViewMode)} aria-label="页面布局">
+          <select className="pdf-select" value={viewMode} onChange={(event) => changeViewMode(event.target.value as PdfViewMode)} aria-label="页面布局">
             <option value="single">单页</option>
             <option value="double">双页</option>
           </select>
