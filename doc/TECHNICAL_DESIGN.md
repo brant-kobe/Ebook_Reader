@@ -14,7 +14,7 @@
 | 本地存储 | Electron `userData/library.json` |
 | 类型检查 | TypeScript `tsc --noEmit` |
 
-`package.json` 当前提供 `dev`、`build`、`lint` 和 `test` 脚本。Vitest 测试位于 `tests/`，覆盖 DOCX 文本提取和 EPUB 包结构、spine 顺序、路径解析及无效输入。
+`package.json` 当前提供 `dev`、`build`、`lint` 和 `test` 脚本。Vitest 测试位于 `tests/`，覆盖 DOCX 文本提取、EPUB 包结构及无效输入、PDF 单双页分页和目录解析与导航规则。
 
 ## 2. 实际目录结构
 
@@ -33,6 +33,9 @@ elc_book/
 │  ├─ features/library/       # 书架页面
 │  ├─ features/reader/        # 阅读页、标签栏、分栏和设置面板
 │  ├─ readers/PdfReader.tsx   # PDF 阅读器
+│  ├─ readers/pdf-outline.ts  # PDF 目录模型、目标解析和导航规则
+│  ├─ readers/PdfOutlinePanel.tsx # PDF 层级目录浮层
+│  ├─ readers/pdf-pagination.ts # PDF 单双页分页规则
 │  ├─ readers/TxtReader.tsx   # TXT/DOCX 纯文本阅读器
 │  ├─ readers/EpubReader.tsx  # EPUB 章节阅读器
 │  ├─ readers/ReaderNotes.tsx # 共享批注悬浮球和笔记面板
@@ -135,7 +138,13 @@ PDF 保存页码，TXT/DOCX 保存 `0` 到 `1` 的滚动比例，EPUB 保存章�
 
 `PdfReader` 通过 IPC 获取完整 PDF 二进制数据，然后调用 `pdfjsLib.getDocument({ data })`。阅读器只取得当前页；双页模式按奇数页起始的固定页对组织页面，额外取得下一页，并将两个页面并行渲染到两个 canvas。偶数页输入会自动归一到该页对的第一页，页数为奇数时最后一页可以单独显示。
 
-阅读器在窗口级别监听键盘事件：PDF 的 `ArrowUp`/`PageUp` 向前翻页，`ArrowDown`/`PageDown` 向后翻页；单页模式每次移动一页，双页模式按固定页对每次移动两页。双页页码起点始终为奇数，页码输入会自动归一到对应页对的第一页；偶数页数的最后一组显示为完整的两页，奇数页数的最后一页可以单独显示。`B` 调用当前阅读位置的书签切换逻辑。焦点位于输入框、选择框或可编辑元素时，不拦截这些按键。
+阅读器在窗口级别监听键盘事件：PDF 的 `ArrowUp`/`PageUp` 向前翻页，`ArrowDown`/`PageDown` 向后翻页；单页模式每次移动一页，双页模式按固定页对每次移动两页。双页页码起点始终为奇数，页码输入会自动归一到对应页对的第一页；偶数页数的最后一组显示为完整的两页，奇数页数的最后一页可以单独显示。`B` 调用当前阅读位置的书签切换逻辑。焦点位于输入框、选择框、可编辑元素或 PDF 目录时，不拦截这些按键。
+
+PDF 文档加载完成后，独立 effect 调用 `loadPdfOutline`，不等待目录解析即可渲染正文和调用 `onReady`。`pdf-outline.ts` 使用 `getOutline()` 读取树，字符串 destination 通过 `getDestination()` 解析；数组首项为从 0 开始的页面索引时加 1，首项为页面引用时通过 `getPageIndex()` 转换。只接受文档范围内的整数页码，重复命名目标在单次解析中缓存。目录模型包含稳定路径 ID、纯文本标题、页码、层级、不可用原因及子节点；控制字符被移除，空标题节点的子项提升至上一级。单个目标解析失败返回不可跳转条目，整棵目录读取失败则只更新目录错误状态；effect 清理后的异步结果不会更新界面。
+
+`PdfOutlinePanel` 使用嵌套列表和原生按钮显示目录，顶层默认展开；当前项改变时展开父级并只滚动目录容器，使选中项保持可见。当前项取已显示页面范围内最近的目录目标，同页优先更深层条目，因此双页右页的章节也能高亮。面板用 `aria-expanded`、`aria-current` 和状态提示提供可访问性，支持焦点移动和 `Esc` 关闭；键盘事件停止冒泡，避免右栏目录触发左栏翻页。标题由 React 作为文本显示，外部链接保留为不可跳转项。
+
+目录跳转先通过 `getPdfOutlinePage` 检查目标，再复用 `goToPage` 和 `normalizePdfPage`；双页模式将偶数页归一到奇数起始页。普通翻页保留滚动位置，目录跳转将滚动恢复目标设为顶部；点击当前页或当前页对也会立即回到顶部。页面变化沿用既有 `onProgress` 保存进度及书签刷新；书签读取忽略已过期的异步响应。`.pdf-body` 为浮层定位，目录不占用 canvas 布局空间；面板使用主题变量、限制宽度并独立滚动，工具栏可换行，适配窄阅读栏和分栏模式。
 
 PDF 缩放分为两种模式：
 
@@ -180,11 +189,12 @@ $env:ELECTRON_RUN_AS_NODE = $null
 npm.cmd run dev
 
 npm.cmd run lint
+npm.cmd test
 npm.cmd run build
 ```
 
-启动后应验证：PDF/TXT/DOCX/EPUB 导入，EPUB 章节目录、章节切换、搜索、书签和进度恢复，PDF 单页和双页、适应页面、手动缩放，TXT 编码和搜索，DOCX 正文与搜索，三类阅读器的批注保存/查看/删除，设置持久化，以及文件被移动后的不可用状态。`npm.cmd test` 覆盖 DOCX 与 EPUB 解析服务。
+启动后应验证：PDF/TXT/DOCX/EPUB 导入，EPUB 章节目录、章节切换、搜索、书签和进度恢复，PDF 单页和双页、适应页面、手动缩放、目录展开与点击跳转、空目录/无效目标提示、目录键盘操作、目录跳转后的进度恢复，以及深色主题和双栏目录，TXT 编码和搜索，DOCX 正文与搜索，三类阅读器的批注保存/查看/编辑/删除，设置持久化，以及文件被移动后的不可用状态。`npm.cmd test` 覆盖 DOCX、EPUB、PDF 分页、目录目标解析、层级清理、混合有效目标、空目录和加载失败，以及单双页目录导航与章节高亮规则。
 
 ## 13. 当前限制
 
-EPUB 暂不支持书内图片、原始 CSS、音视频、外部链接及复杂排版；批注暂不支持跳转和导出；PDF 目录、文本选择、云同步、账号、DRM、数据库迁移和安装包配置也尚未实现。
+EPUB 暂不支持书内图片、原始 CSS、音视频、外部链接及复杂排版；批注暂不支持跳转和导出；PDF 目录暂不支持外部链接、正文自动识别、页内坐标定位、搜索和展开状态持久化。PDF 文本选择、云同步、账号、DRM、数据库迁移和安装包配置也尚未实现。

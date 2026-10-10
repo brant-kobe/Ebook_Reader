@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { BookRecord, BookProgress, ReaderSettings } from '../../electron/shared-types';
 import { ReaderNotes } from './ReaderNotes';
+import { PdfOutlinePanel } from './PdfOutlinePanel';
+import { flattenPdfOutline, getActivePdfOutlineId, getPdfOutlinePage, loadPdfOutline, type PdfOutlineNode } from './pdf-outline';
 import { getPdfPageBounds, getVisiblePdfPages, normalizePdfPage, type PdfViewMode } from './pdf-pagination';
 // Vite resolves the worker as a URL asset during the renderer build.
 // @ts-expect-error TypeScript does not understand Vite's asset query.
@@ -40,8 +42,16 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
   const [viewMode, setViewMode] = useState<PdfViewMode>('single');
   const [error, setError] = useState('');
   const [bookmarkId, setBookmarkId] = useState<string | null>(null);
+  const [outline, setOutline] = useState<PdfOutlineNode[]>([]);
+  const [outlineLoading, setOutlineLoading] = useState(true);
+  const [outlineError, setOutlineError] = useState('');
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const outlineId = useId();
+  const outlineButtonRef = useRef<HTMLButtonElement>(null);
   const scale = zoomMode === 'fit' ? fitScale : manualScale;
   const visiblePages = useMemo(() => getVisiblePdfPages(page, pageCount, viewMode), [page, pageCount, viewMode]);
+  const activeOutlineId = useMemo(() => getActivePdfOutlineId(outline, visiblePages), [outline, visiblePages]);
+  const outlineCount = useMemo(() => flattenPdfOutline(outline).length, [outline]);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +82,23 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
       });
     return () => { active = false; };
   }, [book.id, onReady]);
+
+  useEffect(() => {
+    if (!document) return;
+    let active = true;
+    setOutline([]);
+    setOutlineLoading(true);
+    setOutlineError('');
+    // Outline resolution runs independently of canvas rendering and onReady.
+    void loadPdfOutline(document).then((nodes) => {
+      if (active) setOutline(nodes);
+    }).catch(() => {
+      if (active) setOutlineError('目录加载失败，仍可使用页码翻页');
+    }).finally(() => {
+      if (active) setOutlineLoading(false);
+    });
+    return () => { active = false; };
+  }, [document]);
 
   // Calculate the largest scale that keeps the current page or spread fully
   // visible inside the reader. It is recalculated when the window is resized
@@ -180,9 +207,12 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
   }, [book.id, document, page, pageCount, scale, onProgress, visiblePages]);
 
   useEffect(() => {
+    let active = true;
+    setBookmarkId(null);
     window.bookApi.listBookmarks(book.id).then((response) => {
-      if (response.ok) setBookmarkId(response.data.find((bookmark) => bookmark.location === page)?.id ?? null);
-    });
+      if (active && response.ok) setBookmarkId(response.data.find((bookmark) => bookmark.location === page)?.id ?? null);
+    }).catch(() => { if (active) setBookmarkId(null); });
+    return () => { active = false; };
   }, [book.id, page]);
 
   const toggleBookmark = async () => {
@@ -195,11 +225,19 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
     if (response.ok) setBookmarkId(response.data.id);
   };
 
-  const goToPage = (next: number) => {
+  const goToPage = (next: number, resetScroll = false) => {
     if (!pageCount) return;
     const nextPage = normalizePdfPage(next, pageCount, viewMode);
+    if (resetScroll) {
+      clearTimeout(scrollRestoreTimer.current);
+      pendingScrollRef.current = nextPage === page ? null : { top: 0, left: 0, topRatio: 0, leftRatio: 0 };
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = 0;
+        scrollRef.current.scrollLeft = 0;
+      }
+    }
     if (nextPage === page) return;
-    if (scrollRef.current) {
+    if (!resetScroll && scrollRef.current) {
       const maxTop = Math.max(0, scrollRef.current.scrollHeight - scrollRef.current.clientHeight);
       const maxLeft = Math.max(0, scrollRef.current.scrollWidth - scrollRef.current.clientWidth);
       pendingScrollRef.current = {
@@ -210,6 +248,14 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
       };
     }
     setPage(nextPage);
+  };
+  const selectOutlineNode = (node: PdfOutlineNode) => {
+    const target = getPdfOutlinePage(node, pageCount, viewMode);
+    if (target !== null) goToPage(target, true);
+  };
+  const closeOutline = () => {
+    setOutlineOpen(false);
+    outlineButtonRef.current?.focus();
   };
   const changeViewMode = (nextMode: PdfViewMode) => {
     setViewMode(nextMode);
@@ -230,7 +276,7 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isEditing = target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '');
-      if (isEditing || !document || !pageCount) return;
+      if (event.defaultPrevented || isEditing || target?.closest('.pdf-outline-panel') || !document || !pageCount) return;
 
       const step = viewMode === 'double' ? 2 : 1;
       if (event.key === 'ArrowUp' || event.key === 'PageUp') {
@@ -253,8 +299,17 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
 
   return (
     <section className="pdf-reader">
-      <div className="reader-subbar">
+      <div className="reader-subbar pdf-subbar">
         <div className="pdf-controls">
+          <button
+            ref={outlineButtonRef}
+            type="button"
+            aria-expanded={outlineOpen}
+            aria-controls={outlineId}
+            className={outlineOpen ? 'bookmark-active' : ''}
+            title={outlineLoading ? '正在解析目录' : outlineError || (outlineCount ? `${outlineCount} 个目录项` : '此 PDF 没有内置目录')}
+            onClick={() => setOutlineOpen((open) => !open)}
+          >{outlineLoading ? '目录…' : outlineError ? '目录 · 失败' : outlineCount ? `目录 (${outlineCount})` : '目录 · 无'}</button>
           <button type="button" onClick={() => goToPage(page - (viewMode === 'double' ? 2 : 1))} disabled={page <= 1}>{viewMode === 'double' ? '上一组' : '上一页'}</button>
           <label className="page-input">
             <input type="number" min="1" max={pageCount} value={page} onChange={(event) => goToPage(Number(event.target.value))} />
@@ -281,16 +336,29 @@ export function PdfReader({ book, settings: _settings, onProgress, onReady, keyb
           <button type="button" onClick={() => changeManualScale(0.1)}>+</button>
         </div>
       </div>
-      <div className="pdf-scroll" ref={scrollRef}>
-        <div className={`pdf-page-spread pdf-page-spread-${viewMode}`}>
-          {visiblePages.map((pageNumber, slot) => (
-            <canvas
-              key={slot}
-              ref={(canvas) => setCanvasRef(slot, canvas)}
-              className="pdf-canvas"
-              aria-label={`第 ${pageNumber} 页`}
-            />
-          ))}
+      <div className="pdf-body">
+        {outlineOpen && (
+          <PdfOutlinePanel
+            id={outlineId}
+            nodes={outline}
+            loading={outlineLoading}
+            error={outlineError}
+            activeId={activeOutlineId}
+            onSelect={selectOutlineNode}
+            onClose={closeOutline}
+          />
+        )}
+        <div className="pdf-scroll" ref={scrollRef}>
+          <div className={`pdf-page-spread pdf-page-spread-${viewMode}`}>
+            {visiblePages.map((pageNumber, slot) => (
+              <canvas
+                key={slot}
+                ref={(canvas) => setCanvasRef(slot, canvas)}
+                className="pdf-canvas"
+                aria-label={`第 ${pageNumber} 页`}
+              />
+            ))}
+          </div>
         </div>
       </div>
       <ReaderNotes book={book} location={page} locationLabel={`第 ${page} 页`} />
